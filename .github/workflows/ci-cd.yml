@@ -11,19 +11,16 @@ on:
       - testing
       - main
 
-
 # ============================================================
 # WORKFLOW PERMISSIONS
 # ============================================================
 permissions:
   contents: read
 
-
 # ============================================================
 # JOB 1 — TEST + CODE COVERAGE
 # ============================================================
 jobs:
-
   test:
     name: Test & Code Coverage
     runs-on: ubuntu-latest
@@ -32,23 +29,20 @@ jobs:
     if: ! (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'testing')
 
     steps:
-
       # --------------------------------------------------------
       # Checkout repository
       # --------------------------------------------------------
       - name: Checkout Code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@v7
 
       # --------------------------------------------------------
       # Setup Node.js
       # --------------------------------------------------------
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
-
 
       # --------------------------------------------------------
       # Install dependencies
@@ -56,13 +50,11 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-
       # --------------------------------------------------------
       # Run tests and generate coverage
       # --------------------------------------------------------
       - name: Run Tests & Coverage
         run: npm run test:coverage
-
 
       # --------------------------------------------------------
       # Check coverage >= 80%
@@ -88,19 +80,16 @@ jobs:
             exit 1
           fi
 
-
       # --------------------------------------------------------
       # Upload coverage report
       # --------------------------------------------------------
       - name: Upload Coverage Report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: code-coverage-report
           path: coverage/
           retention-days: 7
-
-
 
   # ============================================================
   # JOB 2 — BRANCH PROMOTION VALIDATION
@@ -113,7 +102,6 @@ jobs:
     if: github.event_name == 'pull_request'
 
     steps:
-
       - name: Validate Branch Flow
         run: |
 
@@ -166,8 +154,6 @@ jobs:
 
           echo "✅ Branch promotion policy satisfied."
 
-
-
   # ============================================================
   # JOB 3 — DOCKER BUILD + TRIVY
   # ============================================================
@@ -189,13 +175,11 @@ jobs:
       IMAGE_NAME: ${{ vars.DOCKERHUB_USERNAME }}/starlight-notes
 
     steps:
-
       # --------------------------------------------------------
       # Checkout
       # --------------------------------------------------------
       - name: Checkout Code
         uses: actions/checkout@v4
-
 
       # --------------------------------------------------------
       # Setup Docker Buildx
@@ -203,34 +187,33 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-
       # --------------------------------------------------------
       # Login to Docker Hub
       # --------------------------------------------------------
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-
       # --------------------------------------------------------
       # Build Docker image
+      #
+      # load: true
+      # makes the image available to Trivy locally.
       # --------------------------------------------------------
       - name: Build Docker Image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
 
           load: true
 
-          tags:
-            starlight-notes:scan
+          tags: starlight-notes:scan
 
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
 
       # ========================================================
       # TRIVY SECURITY SCAN
@@ -244,7 +227,6 @@ jobs:
           severity: CRITICAL
           ignore-unfixed: false
           exit-code: 1
-
 
       # --------------------------------------------------------
       # Display Trivy report in GitHub Actions log
@@ -264,7 +246,6 @@ jobs:
             echo "Trivy report not found."
           fi
 
-
       # --------------------------------------------------------
       # Upload Trivy report
       # --------------------------------------------------------
@@ -275,7 +256,6 @@ jobs:
           name: trivy-security-report
           path: trivy-report.txt
           retention-days: 7
-
 
       # ========================================================
       # PUSH IMAGE
@@ -294,8 +274,6 @@ jobs:
 
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-
 
   # ============================================================
   # JOB 4 — DEPLOY TO PRODUCTION VPS
@@ -322,7 +300,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       # ========================================================
       # SSH DEPLOYMENT
       # ========================================================
