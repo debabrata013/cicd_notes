@@ -286,7 +286,7 @@ jobs:
             docker run -d \
               --name starlight-notes \
               --restart unless-stopped \
-              -p 3000:3000 \
+              -p 6000:3000 \
               ${{ vars.DOCKERHUB_USERNAME }}/starlight-notes:latest
 
 
