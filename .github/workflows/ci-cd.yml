@@ -11,59 +11,32 @@ on:
       - testing
       - main
 
-
-# ============================================================
-# WORKFLOW PERMISSIONS
-# ============================================================
 permissions:
   contents: read
 
-
-# ============================================================
-# JOB 1 — TEST + CODE COVERAGE
-# ============================================================
 jobs:
-
   test:
     name: Test & Code Coverage
     runs-on: ubuntu-latest
 
-    steps:
+    if: ! (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'testing')
 
-      # --------------------------------------------------------
-      # Checkout repository
-      # --------------------------------------------------------
+    steps:
       - name: Checkout Code
         uses: actions/checkout@v7
 
-
-      # --------------------------------------------------------
-      # Setup Node.js
-      # --------------------------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
 
-
-      # --------------------------------------------------------
-      # Install dependencies
-      # --------------------------------------------------------
       - name: Install Dependencies
         run: npm ci
 
-
-      # --------------------------------------------------------
-      # Run tests and generate coverage
-      # --------------------------------------------------------
       - name: Run Tests & Coverage
         run: npm run test:coverage
 
-
-      # --------------------------------------------------------
-      # Check coverage >= 80%
-      # --------------------------------------------------------
       - name: Check Code Coverage
         run: |
 
@@ -79,16 +52,12 @@ jobs:
 
           if node -e "process.exit(${COVERAGE} >= 80 ? 0 : 1)"
           then
-            echo "✅ Coverage requirement satisfied."
+            echo " Coverage requirement satisfied."
           else
-            echo "❌ Coverage is below 80%."
+            echo " Coverage is below 80%."
             exit 1
           fi
 
-
-      # --------------------------------------------------------
-      # Upload coverage report
-      # --------------------------------------------------------
       - name: Upload Coverage Report
         if: always()
         uses: actions/upload-artifact@v7
@@ -97,20 +66,13 @@ jobs:
           path: coverage/
           retention-days: 7
 
-
-
-  # ============================================================
-  # JOB 2 — BRANCH PROMOTION VALIDATION
-  # ============================================================
   branch-policy:
     name: Validate Branch Promotion
     runs-on: ubuntu-latest
 
-    # Only execute for Pull Requests
     if: github.event_name == 'pull_request'
 
     steps:
-
       - name: Validate Branch Flow
         run: |
 
@@ -123,15 +85,12 @@ jobs:
           echo "======================================"
 
 
-          # ----------------------------------------------------
-          # DEV → TESTING
-          # ----------------------------------------------------
           if [ "$TARGET" = "testing" ]
           then
 
             if [ "$SOURCE" != "dev" ]
             then
-              echo "❌ Invalid branch promotion."
+              echo " Invalid branch promotion."
               echo ""
               echo "testing can only receive PRs from dev."
               echo "Allowed:"
@@ -141,10 +100,6 @@ jobs:
 
           fi
 
-
-          # ----------------------------------------------------
-          # TESTING → MAIN
-          # ----------------------------------------------------
           if [ "$TARGET" = "main" ]
           then
 
@@ -161,25 +116,18 @@ jobs:
           fi
 
 
-          echo "✅ Branch promotion policy satisfied."
+          echo " Branch promotion policy satisfied."
 
-
-
-  # ============================================================
-  # JOB 3 — DOCKER BUILD + TRIVY
-  # ============================================================
   build-and-scan:
     name: Build Docker Image & Security Scan
 
     needs:
       - test
 
-    # ----------------------------------------------------------
-    # Only build Docker image on pushes to testing/main
-    #
-    # PRs only run tests and branch validation.
-    # ----------------------------------------------------------
-    if: github.event_name == 'push'
+    if: |
+      always() &&
+      github.event_name == 'push' &&
+      ! (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'testing')
 
     runs-on: ubuntu-latest
 
@@ -187,40 +135,18 @@ jobs:
       IMAGE_NAME: ${{ vars.DOCKERHUB_USERNAME }}/starlight-notes
 
     steps:
-
-      # --------------------------------------------------------
-      # Checkout
-      # --------------------------------------------------------
       - name: Checkout Code
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
-
-      # --------------------------------------------------------
-      # Setup Docker Buildx
-      # --------------------------------------------------------
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v3
 
-
-      # --------------------------------------------------------
-      # Login to Docker Hub
-      #
-      # DOCKERHUB_USERNAME = Repository Variable
-      # DOCKERHUB_TOKEN    = Repository Secret
-      # --------------------------------------------------------
       - name: Login to Docker Hub
         uses: docker/login-action@v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-
-      # --------------------------------------------------------
-      # Build Docker image
-      #
-      # load: true
-      # makes the image available to Trivy locally.
-      # --------------------------------------------------------
       - name: Build Docker Image
         uses: docker/build-push-action@v7
         with:
@@ -229,49 +155,19 @@ jobs:
 
           load: true
 
-          tags:
-            starlight-notes:scan
+          tags: starlight-notes:scan
 
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-
-      # ========================================================
-      # TRIVY SECURITY SCAN
-      # ========================================================
-      #
-      # ONLY CRITICAL vulnerabilities fail the pipeline.
-      #
-      # LOW      → PASS
-      # MEDIUM   → PASS
-      # HIGH     → PASS
-      # CRITICAL → FAIL
-      #
-      # ignore-unfixed=false means:
-      #
-      # CRITICAL with fix    → FAIL
-      # CRITICAL without fix → FAIL
-      #
-      # ========================================================
       - name: Trivy Security Scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: starlight-notes:scan
-
           format: table
-
           output: trivy-report.txt
-
           severity: CRITICAL
-
           ignore-unfixed: false
-
           exit-code: 1
-
-
-      # --------------------------------------------------------
-      # Display Trivy report in GitHub Actions log
-      # --------------------------------------------------------
       - name: Display Trivy Report
         if: always()
         run: |
@@ -287,32 +183,16 @@ jobs:
             echo "Trivy report not found."
           fi
 
-
-      # --------------------------------------------------------
-      # Upload Trivy report
-      # --------------------------------------------------------
       - name: Upload Trivy Report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: trivy-security-report
           path: trivy-report.txt
           retention-days: 7
 
-
-      # ========================================================
-      # PUSH IMAGE
-      #
-      # This step runs ONLY if:
-      #
-      # Test passed
-      # Docker build passed
-      # Trivy passed
-      #
-      # Therefore CRITICAL vulnerability prevents image push.
-      # ========================================================
       - name: Push Docker Image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
@@ -326,11 +206,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-
-
-  # ============================================================
-  # JOB 4 — DEPLOY TO PRODUCTION VPS
-  # ============================================================
   deploy:
     name: Deploy to Production VPS
 
@@ -338,30 +213,18 @@ jobs:
       - test
       - build-and-scan
 
-    # ----------------------------------------------------------
-    # DEPLOY ONLY WHEN:
-    #
-    # 1. Event = push
-    # 2. Branch = main
-    # 3. Tests passed
-    # 4. Docker build passed
-    # 5. Trivy passed
-    # ----------------------------------------------------------
     if: |
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
-      needs.test.result == 'success' &&
-      needs.build-and-scan.result == 'success'
+      always() &&
+      (
+        (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'testing') ||
+        (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && needs.build-and-scan.result == 'success')
+      )
 
     runs-on: ubuntu-latest
 
     steps:
-
-      # ========================================================
-      # SSH DEPLOYMENT
-      # ========================================================
       - name: Deploy to Production VPS
-        uses: appleboy/ssh-action@v1.2.5
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ vars.VPS_USERNAME }}
@@ -390,7 +253,7 @@ jobs:
             # PULL LATEST IMAGE
             # ==================================================
 
-            echo "📦 Pulling latest Docker image..."
+            echo " Pulling latest Docker image..."
 
             docker pull \
               ${{ vars.DOCKERHUB_USERNAME }}/starlight-notes:latest
@@ -409,7 +272,7 @@ jobs:
             # REMOVE OLD CONTAINER
             # ==================================================
 
-            echo "🗑️ Removing old container..."
+            echo " Removing old container..."
 
             docker rm starlight-notes 2>/dev/null || true
 
@@ -423,7 +286,7 @@ jobs:
             docker run -d \
               --name starlight-notes \
               --restart unless-stopped \
-              -p 6000:3000 \
+              -p 3000:3000 \
               ${{ vars.DOCKERHUB_USERNAME }}/starlight-notes:latest
 
 
@@ -440,7 +303,7 @@ jobs:
             # VERIFY CONTAINER
             # ==================================================
 
-            echo "🔍 Checking container status..."
+            echo " Checking container status..."
 
             if docker ps \
               --filter "name=starlight-notes" \
@@ -448,11 +311,11 @@ jobs:
               | grep -q starlight-notes
             then
 
-              echo "✅ Container is running."
+              echo " Container is running."
 
             else
 
-              echo "❌ Container failed to start."
+              echo " Container failed to start."
 
               echo ""
               echo "========== CONTAINER LOGS =========="
