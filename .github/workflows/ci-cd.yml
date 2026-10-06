@@ -40,16 +40,16 @@ jobs:
           echo "Target: $TARGET_BRANCH"
 
           if [ "$TARGET_BRANCH" = "testing" ] && [ "$SOURCE_BRANCH" != "dev" ]; then
-            echo "❌ PRs targeting testing must come from dev."
+            echo " PRs targeting testing must come from dev."
             exit 1
           fi
 
           if [ "$TARGET_BRANCH" = "main" ] && [ "$SOURCE_BRANCH" != "testing" ]; then
-            echo "❌ PRs targeting main must come from testing."
+            echo " PRs targeting main must come from testing."
             exit 1
           fi
 
-          echo "✅ Branch promotion rule passed."
+          echo " Branch promotion rule passed."
 
       - name: Setup Node.js
         uses: actions/setup-node@v7.0.0
@@ -74,10 +74,10 @@ jobs:
 
           if node -e "process.exit(${COVERAGE_PCT} >= 80 ? 0 : 1)"; then
             echo "met=true" >> "$GITHUB_OUTPUT"
-            echo "✅ Coverage requirement met."
+            echo " Coverage requirement met."
           else
             echo "met=false" >> "$GITHUB_OUTPUT"
-            echo "❌ Coverage requirement not met."
+            echo " Coverage requirement not met."
             exit 1
           fi
 
@@ -212,22 +212,22 @@ jobs:
             set -e
 
             echo "======================================"
-            echo "🚀 STARTING PRODUCTION DEPLOYMENT"
+            echo " STARTING PRODUCTION DEPLOYMENT"
             echo "======================================"
 
-            echo "🔐 Logging in to Docker Hub..."
+            echo " Logging in to Docker Hub..."
 
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
               docker login \
               --username "${{ vars.DOCKERHUB_USERNAME }}" \
               --password-stdin
 
-            echo "📦 Pulling Docker image..."
+            echo " Pulling Docker image..."
 
             docker pull \
               ${{ vars.DOCKERHUB_USERNAME }}/starlight-notes:${{ github.sha }}
 
-            echo "🛑 Stopping old container..."
+            echo " Stopping old container..."
 
             docker stop starlight-notes 2>/dev/null || true
 
@@ -235,15 +235,15 @@ jobs:
 
             docker rm starlight-notes 2>/dev/null || true
 
-            echo "🔍 Checking port 3000..."
+            echo " Checking port 3000..."
 
             if sudo ss -ltnp | grep -q ':3000'; then
-              echo "❌ Port 3000 is already in use."
+              echo " Port 3000 is already in use."
               sudo ss -ltnp | grep ':3000'
               exit 1
             fi
 
-            echo "🚀 Starting new container..."
+            echo " Starting new container..."
 
             docker run -d \
               --name starlight-notes \
@@ -251,28 +251,28 @@ jobs:
               -p 3000:3000 \
               ${{ vars.DOCKERHUB_USERNAME }}/starlight-notes:${{ github.sha }}
 
-            echo "⏳ Waiting for application..."
+            echo " Waiting for application..."
 
             sleep 5
 
-            echo "🔍 Checking container..."
+            echo " Checking container..."
 
             if docker ps \
               --filter "name=starlight-notes" \
               --filter "status=running" \
               | grep -q starlight-notes
             then
-              echo "✅ Container is running."
+              echo " Container is running."
             else
-              echo "❌ Container failed to start."
+              echo " Container failed to start."
               docker logs starlight-notes || true
               exit 1
             fi
 
-            echo "🧹 Cleaning unused Docker images..."
+            echo " Cleaning unused Docker images..."
 
             docker image prune -f
 
             echo "======================================"
-            echo "✅ PRODUCTION DEPLOYMENT SUCCESSFUL"
+            echo " PRODUCTION DEPLOYMENT SUCCESSFUL"
             echo "======================================"
