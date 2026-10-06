@@ -122,7 +122,7 @@ jobs:
 
             if [ "$SOURCE" != "dev" ]
             then
-              echo "❌ Invalid branch promotion."
+              echo " Invalid branch promotion."
               echo ""
               echo "testing can only receive PRs from dev."
               echo "Allowed:"
@@ -257,9 +257,6 @@ jobs:
           path: trivy-report.txt
           retention-days: 7
 
-      # ========================================================
-      # PUSH IMAGE
-      # ========================================================
       - name: Push Docker Image
         uses: docker/build-push-action@v5
         with:
