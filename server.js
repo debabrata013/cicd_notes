@@ -26,7 +26,11 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Start Server
-app.listen(PORT, () => {
-  console.log(`🚀 Starlight Notes app server listening on http://localhost:${PORT}`);
-});
+// Start Server if run directly
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Starlight Notes app server listening on http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
