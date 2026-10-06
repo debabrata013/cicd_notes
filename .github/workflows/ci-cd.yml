@@ -12,7 +12,7 @@ on:
 
 jobs:
   # ----------------------------------------------------------------------------
-  # Job 1: Unit Testing & Code Coverage (Runs on testing & main)
+  # Job 1: Unit Testing & Code Coverage (Runs on testing & main push/PR)
   # ----------------------------------------------------------------------------
   test_and_coverage:
     name: Run Tests & Check Coverage
@@ -87,12 +87,12 @@ jobs:
           retention-days: 7
 
   # ----------------------------------------------------------------------------
-  # Job 2: Build Multi-Stage Docker Image & Trivy Scan (Runs ONLY on main)
+  # Job 2: Build Docker Image & Trivy Security Scan (Runs if coverage >= 80%)
   # ----------------------------------------------------------------------------
   build_and_scan:
     name: Build Docker Image & Trivy Security Scan
     needs: test_and_coverage
-    if: needs.test_and_coverage.outputs.coverage_met == 'true' && (github.ref == 'refs/heads/main' || github.base_ref == 'main')
+    if: needs.test_and_coverage.outputs.coverage_met == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -103,7 +103,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/testing' || github.ref == 'refs/heads/main')
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -119,16 +119,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Run Trivy Vulnerability Scanner on Built Image
+      - name: Run Trivy Vulnerability Scanner (Fails on CRITICAL vulnerabilities)
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: "starlight-notes:local"
           format: "table"
           output: "trivy-scan-report.txt"
-          exit-code: "0"
+          exit-code: "1"
           ignore-unfixed: true
           vuln-type: "os,library"
-          severity: "CRITICAL,HIGH"
+          severity: "CRITICAL"
 
       - name: Upload Trivy Security Scan Artifact
         if: always()
@@ -138,8 +138,8 @@ jobs:
           path: trivy-scan-report.txt
           retention-days: 7
 
-      - name: Build and Push Docker Image to Docker Hub
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Push Docker Image to Docker Hub
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/testing' || github.ref == 'refs/heads/main')
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -152,12 +152,15 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ----------------------------------------------------------------------------
-  # Job 3: Continuous Deployment (CD) to VPS (Runs ONLY on main push)
+  # Job 3: Continuous Deployment (CD) to VPS (Push to main OR PR from testing to main)
   # ----------------------------------------------------------------------------
   deploy_vps:
     name: Deploy Latest Image to VPS
-    needs: build_and_scan
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test_and_coverage, build_and_scan]
+    if: |
+      always() && 
+      (needs.build_and_scan.result == 'success' || (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'testing')) &&
+      (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main'))
     runs-on: ubuntu-latest
 
     steps:
