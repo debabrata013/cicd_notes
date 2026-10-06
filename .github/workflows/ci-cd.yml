@@ -400,7 +400,7 @@ jobs:
             # STOP OLD CONTAINER
             # ==================================================
 
-            echo "🛑 Stopping old container..."
+            echo " Stopping old container..."
 
             docker stop starlight-notes 2>/dev/null || true
 
@@ -418,7 +418,7 @@ jobs:
             # START NEW CONTAINER
             # ==================================================
 
-            echo "🚀 Starting new container..."
+            echo " Starting new container..."
 
             docker run -d \
               --name starlight-notes \
@@ -480,5 +480,5 @@ jobs:
 
             echo ""
             echo "======================================"
-            echo "✅ PRODUCTION DEPLOYMENT SUCCESSFUL"
+            echo " PRODUCTION DEPLOYMENT SUCCESSFUL"
             echo "======================================"
