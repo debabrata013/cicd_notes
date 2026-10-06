@@ -3,12 +3,10 @@ name: CI/CD Pipeline & Automated Deployment
 on:
   push:
     branches:
-      - dev
       - testing
       - main
   pull_request:
     branches:
-      - dev
       - testing
       - main
 
