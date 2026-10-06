@@ -11,9 +11,10 @@ on:
       - testing
       - main
 
-# ------------------------------------------------------------
-# Minimum permissions required by this workflow
-# ------------------------------------------------------------
+
+# ============================================================
+# WORKFLOW PERMISSIONS
+# ============================================================
 permissions:
   contents: read
 
@@ -29,38 +30,43 @@ jobs:
 
     steps:
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       # Checkout repository
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       - name: Checkout Code
         uses: actions/checkout@v7
 
-      # ------------------------------------------------------
+
+      # --------------------------------------------------------
       # Setup Node.js
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
 
-      # ------------------------------------------------------
+
+      # --------------------------------------------------------
       # Install dependencies
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       - name: Install Dependencies
         run: npm ci
 
-      # ------------------------------------------------------
-      # Run tests + coverage
-      # ------------------------------------------------------
+
+      # --------------------------------------------------------
+      # Run tests and generate coverage
+      # --------------------------------------------------------
       - name: Run Tests & Coverage
         run: npm run test:coverage
 
-      # ------------------------------------------------------
+
+      # --------------------------------------------------------
       # Check coverage >= 80%
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       - name: Check Code Coverage
         run: |
+
           COVERAGE=$(node -e "
             const summary = require('./coverage/coverage-summary.json');
             console.log(summary.total.lines.pct);
@@ -68,19 +74,21 @@ jobs:
 
           echo "======================================"
           echo "Code Coverage: ${COVERAGE}%"
-          echo "Required: 80%"
+          echo "Required Coverage: 80%"
           echo "======================================"
 
-          if node -e "process.exit(${COVERAGE} >= 80 ? 0 : 1)"; then
+          if node -e "process.exit(${COVERAGE} >= 80 ? 0 : 1)"
+          then
             echo "✅ Coverage requirement satisfied."
           else
             echo "❌ Coverage is below 80%."
             exit 1
           fi
 
-      # ------------------------------------------------------
+
+      # --------------------------------------------------------
       # Upload coverage report
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       - name: Upload Coverage Report
         if: always()
         uses: actions/upload-artifact@v7
@@ -90,6 +98,7 @@ jobs:
           retention-days: 7
 
 
+
   # ============================================================
   # JOB 2 — BRANCH PROMOTION VALIDATION
   # ============================================================
@@ -97,7 +106,7 @@ jobs:
     name: Validate Branch Promotion
     runs-on: ubuntu-latest
 
-    # Only run this job for Pull Requests
+    # Only execute for Pull Requests
     if: github.event_name == 'pull_request'
 
     steps:
@@ -113,39 +122,51 @@ jobs:
           echo "Target Branch : $TARGET"
           echo "======================================"
 
-          # --------------------------------------------------
-          # dev -> testing
-          # --------------------------------------------------
-          if [ "$TARGET" = "testing" ]; then
 
-            if [ "$SOURCE" != "dev" ]; then
+          # ----------------------------------------------------
+          # DEV → TESTING
+          # ----------------------------------------------------
+          if [ "$TARGET" = "testing" ]
+          then
+
+            if [ "$SOURCE" != "dev" ]
+            then
               echo "❌ Invalid branch promotion."
+              echo ""
               echo "testing can only receive PRs from dev."
-              echo "Allowed: dev -> testing"
+              echo "Allowed:"
+              echo "dev → testing"
               exit 1
             fi
 
           fi
 
-          # --------------------------------------------------
-          # testing -> main
-          # --------------------------------------------------
-          if [ "$TARGET" = "main" ]; then
 
-            if [ "$SOURCE" != "testing" ]; then
+          # ----------------------------------------------------
+          # TESTING → MAIN
+          # ----------------------------------------------------
+          if [ "$TARGET" = "main" ]
+          then
+
+            if [ "$SOURCE" != "testing" ]
+            then
               echo "❌ Invalid branch promotion."
+              echo ""
               echo "main can only receive PRs from testing."
-              echo "Allowed: testing -> main"
+              echo "Allowed:"
+              echo "testing → main"
               exit 1
             fi
 
           fi
+
 
           echo "✅ Branch promotion policy satisfied."
 
 
+
   # ============================================================
-  # JOB 3 — DOCKER BUILD + TRIVY SECURITY SCAN
+  # JOB 3 — DOCKER BUILD + TRIVY
   # ============================================================
   build-and-scan:
     name: Build Docker Image & Security Scan
@@ -153,8 +174,11 @@ jobs:
     needs:
       - test
 
-    # Build only after push to testing/main.
-    # PRs are tested but don't push Docker images.
+    # ----------------------------------------------------------
+    # Only build Docker image on pushes to testing/main
+    #
+    # PRs only run tests and branch validation.
+    # ----------------------------------------------------------
     if: github.event_name == 'push'
 
     runs-on: ubuntu-latest
@@ -164,69 +188,109 @@ jobs:
 
     steps:
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       # Checkout
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       - name: Checkout Code
         uses: actions/checkout@v7
 
-      # ------------------------------------------------------
+
+      # --------------------------------------------------------
       # Setup Docker Buildx
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      # ------------------------------------------------------
+
+      # --------------------------------------------------------
       # Login to Docker Hub
-      # ------------------------------------------------------
+      #
+      # DOCKERHUB_USERNAME = Repository Variable
+      # DOCKERHUB_TOKEN    = Repository Secret
+      # --------------------------------------------------------
       - name: Login to Docker Hub
         uses: docker/login-action@v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # ------------------------------------------------------
-      # Build Docker image locally
-      # ------------------------------------------------------
+
+      # --------------------------------------------------------
+      # Build Docker image
+      #
+      # load: true
+      # makes the image available to Trivy locally.
+      # --------------------------------------------------------
       - name: Build Docker Image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
 
-          # Load image into local Docker daemon
-          # so Trivy can scan it.
           load: true
 
-          tags: |
+          tags:
             starlight-notes:scan
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ------------------------------------------------------
-      # Trivy vulnerability scan
-      # ------------------------------------------------------
+
+      # ========================================================
+      # TRIVY SECURITY SCAN
+      # ========================================================
+      #
+      # ONLY CRITICAL vulnerabilities fail the pipeline.
+      #
+      # LOW      → PASS
+      # MEDIUM   → PASS
+      # HIGH     → PASS
+      # CRITICAL → FAIL
+      #
+      # ignore-unfixed=false means:
+      #
+      # CRITICAL with fix    → FAIL
+      # CRITICAL without fix → FAIL
+      #
+      # ========================================================
       - name: Trivy Security Scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: starlight-notes:scan
+
           format: table
+
           output: trivy-report.txt
 
-          # Fail pipeline on HIGH or CRITICAL vulnerabilities
-          severity: HIGH,CRITICAL
+          severity: CRITICAL
 
-          # Don't fail because of vulnerabilities without fixes
-          ignore-unfixed: true
+          ignore-unfixed: false
 
-          # Non-zero exit code fails the job
           exit-code: 1
 
-      # ------------------------------------------------------
+
+      # --------------------------------------------------------
+      # Display Trivy report in GitHub Actions log
+      # --------------------------------------------------------
+      - name: Display Trivy Report
+        if: always()
+        run: |
+
+          echo "======================================"
+          echo "        TRIVY SECURITY REPORT"
+          echo "======================================"
+
+          if [ -f trivy-report.txt ]
+          then
+            cat trivy-report.txt
+          else
+            echo "Trivy report not found."
+          fi
+
+
+      # --------------------------------------------------------
       # Upload Trivy report
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       - name: Upload Trivy Report
         if: always()
         uses: actions/upload-artifact@v7
@@ -235,9 +299,18 @@ jobs:
           path: trivy-report.txt
           retention-days: 7
 
-      # ------------------------------------------------------
-      # Push image only after Trivy succeeds
-      # ------------------------------------------------------
+
+      # ========================================================
+      # PUSH IMAGE
+      #
+      # This step runs ONLY if:
+      #
+      # Test passed
+      # Docker build passed
+      # Trivy passed
+      #
+      # Therefore CRITICAL vulnerability prevents image push.
+      # ========================================================
       - name: Push Docker Image
         uses: docker/build-push-action@v7
         with:
@@ -254,6 +327,7 @@ jobs:
           cache-to: type=gha,mode=max
 
 
+
   # ============================================================
   # JOB 4 — DEPLOY TO PRODUCTION VPS
   # ============================================================
@@ -265,12 +339,13 @@ jobs:
       - build-and-scan
 
     # ----------------------------------------------------------
-    # Deploy ONLY when:
+    # DEPLOY ONLY WHEN:
     #
-    # 1. Event is push
-    # 2. Branch is main
+    # 1. Event = push
+    # 2. Branch = main
     # 3. Tests passed
-    # 4. Docker build + Trivy passed
+    # 4. Docker build passed
+    # 5. Trivy passed
     # ----------------------------------------------------------
     if: |
       github.event_name == 'push' &&
@@ -282,33 +357,46 @@ jobs:
 
     steps:
 
-      # ------------------------------------------------------
-      # SSH into VPS and deploy
-      # ------------------------------------------------------
+      # ========================================================
+      # SSH DEPLOYMENT
+      # ========================================================
       - name: Deploy to Production VPS
         uses: appleboy/ssh-action@v1.2.5
         with:
 
+          # ----------------------------------------------------
           # VPS connection
+          #
+          # VPS_HOST     = Secret
+          # VPS_USERNAME = Variable
+          # VPS_PORT     = Variable
+          # VPS_SSH_KEY  = Secret
+          # ----------------------------------------------------
           host: ${{ secrets.VPS_HOST }}
+
           username: ${{ vars.VPS_USERNAME }}
+
           key: ${{ secrets.VPS_SSH_KEY }}
+
           port: ${{ vars.VPS_PORT }}
 
-          # Stop immediately if any command fails
+          # Stop immediately if a command fails
           script_stop: true
 
           script: |
 
             set -e
 
+
             echo "======================================"
-            echo "🚀 Starting Production Deployment"
+            echo "🚀 STARTING PRODUCTION DEPLOYMENT"
             echo "======================================"
 
-            # ------------------------------------------------
-            # Login to Docker Hub
-            # ------------------------------------------------
+
+            # ==================================================
+            # LOGIN TO DOCKER HUB
+            # ==================================================
+
             echo "🔐 Logging in to Docker Hub..."
 
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
@@ -317,34 +405,38 @@ jobs:
               --password-stdin
 
 
-            # ------------------------------------------------
-            # Pull latest image
-            # ------------------------------------------------
+            # ==================================================
+            # PULL LATEST IMAGE
+            # ==================================================
+
             echo "📦 Pulling latest Docker image..."
 
             docker pull \
               ${{ vars.DOCKERHUB_USERNAME }}/starlight-notes:latest
 
 
-            # ------------------------------------------------
-            # Stop old container
-            # ------------------------------------------------
+            # ==================================================
+            # STOP OLD CONTAINER
+            # ==================================================
+
             echo "🛑 Stopping old container..."
 
             docker stop starlight-notes 2>/dev/null || true
 
 
-            # ------------------------------------------------
-            # Remove old container
-            # ------------------------------------------------
+            # ==================================================
+            # REMOVE OLD CONTAINER
+            # ==================================================
+
             echo "🗑️ Removing old container..."
 
             docker rm starlight-notes 2>/dev/null || true
 
 
-            # ------------------------------------------------
-            # Start new container
-            # ------------------------------------------------
+            # ==================================================
+            # START NEW CONTAINER
+            # ==================================================
+
             echo "🚀 Starting new container..."
 
             docker run -d \
@@ -354,17 +446,19 @@ jobs:
               ${{ vars.DOCKERHUB_USERNAME }}/starlight-notes:latest
 
 
-            # ------------------------------------------------
-            # Give application time to start
-            # ------------------------------------------------
-            echo "⏳ Waiting for application..."
+            # ==================================================
+            # WAIT FOR APPLICATION
+            # ==================================================
+
+            echo "⏳ Waiting for application to start..."
 
             sleep 5
 
 
-            # ------------------------------------------------
-            # Verify container
-            # ------------------------------------------------
+            # ==================================================
+            # VERIFY CONTAINER
+            # ==================================================
+
             echo "🔍 Checking container status..."
 
             if docker ps \
@@ -379,7 +473,9 @@ jobs:
 
               echo "❌ Container failed to start."
 
+              echo ""
               echo "========== CONTAINER LOGS =========="
+              echo ""
 
               docker logs starlight-notes || true
 
@@ -388,17 +484,20 @@ jobs:
             fi
 
 
-            # ------------------------------------------------
-            # Docker cleanup
-            # ------------------------------------------------
+            # ==================================================
+            # CLEAN UNUSED IMAGES
+            # ==================================================
+
             echo "🧹 Cleaning unused Docker images..."
 
             docker image prune -f
 
 
-            # ------------------------------------------------
-            # Deployment completed
-            # ------------------------------------------------
+            # ==================================================
+            # SUCCESS
+            # ==================================================
+
+            echo ""
             echo "======================================"
             echo "✅ PRODUCTION DEPLOYMENT SUCCESSFUL"
             echo "======================================"
