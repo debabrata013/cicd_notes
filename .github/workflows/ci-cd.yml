@@ -11,45 +11,65 @@ on:
       - testing
       - main
 
+# ------------------------------------------------------------
+# Minimum permissions required by this workflow
+# ------------------------------------------------------------
 permissions:
   contents: read
 
-env:
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/starlight-notes
 
+# ============================================================
+# JOB 1 — TEST + CODE COVERAGE
+# ============================================================
 jobs:
 
-  # ============================================================
-  # 1. TEST + COVERAGE
-  # ============================================================
   test:
     name: Test & Code Coverage
     runs-on: ubuntu-latest
 
     steps:
+
+      # ------------------------------------------------------
+      # Checkout repository
+      # ------------------------------------------------------
       - name: Checkout Code
         uses: actions/checkout@v7
 
+      # ------------------------------------------------------
+      # Setup Node.js
+      # ------------------------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
 
+      # ------------------------------------------------------
+      # Install dependencies
+      # ------------------------------------------------------
       - name: Install Dependencies
         run: npm ci
 
+      # ------------------------------------------------------
+      # Run tests + coverage
+      # ------------------------------------------------------
       - name: Run Tests & Coverage
         run: npm run test:coverage
 
-      - name: Check Coverage >= 80%
+      # ------------------------------------------------------
+      # Check coverage >= 80%
+      # ------------------------------------------------------
+      - name: Check Code Coverage
         run: |
           COVERAGE=$(node -e "
             const summary = require('./coverage/coverage-summary.json');
             console.log(summary.total.lines.pct);
           ")
 
+          echo "======================================"
           echo "Code Coverage: ${COVERAGE}%"
+          echo "Required: 80%"
+          echo "======================================"
 
           if node -e "process.exit(${COVERAGE} >= 80 ? 0 : 1)"; then
             echo "✅ Coverage requirement satisfied."
@@ -58,9 +78,12 @@ jobs:
             exit 1
           fi
 
+      # ------------------------------------------------------
+      # Upload coverage report
+      # ------------------------------------------------------
       - name: Upload Coverage Report
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: code-coverage-report
           path: coverage/
@@ -68,39 +91,113 @@ jobs:
 
 
   # ============================================================
-  # 2. BUILD + TRIVY SECURITY SCAN
+  # JOB 2 — BRANCH PROMOTION VALIDATION
+  # ============================================================
+  branch-policy:
+    name: Validate Branch Promotion
+    runs-on: ubuntu-latest
+
+    # Only run this job for Pull Requests
+    if: github.event_name == 'pull_request'
+
+    steps:
+
+      - name: Validate Branch Flow
+        run: |
+
+          SOURCE="${{ github.head_ref }}"
+          TARGET="${{ github.base_ref }}"
+
+          echo "======================================"
+          echo "Source Branch : $SOURCE"
+          echo "Target Branch : $TARGET"
+          echo "======================================"
+
+          # --------------------------------------------------
+          # dev -> testing
+          # --------------------------------------------------
+          if [ "$TARGET" = "testing" ]; then
+
+            if [ "$SOURCE" != "dev" ]; then
+              echo "❌ Invalid branch promotion."
+              echo "testing can only receive PRs from dev."
+              echo "Allowed: dev -> testing"
+              exit 1
+            fi
+
+          fi
+
+          # --------------------------------------------------
+          # testing -> main
+          # --------------------------------------------------
+          if [ "$TARGET" = "main" ]; then
+
+            if [ "$SOURCE" != "testing" ]; then
+              echo "❌ Invalid branch promotion."
+              echo "main can only receive PRs from testing."
+              echo "Allowed: testing -> main"
+              exit 1
+            fi
+
+          fi
+
+          echo "✅ Branch promotion policy satisfied."
+
+
+  # ============================================================
+  # JOB 3 — DOCKER BUILD + TRIVY SECURITY SCAN
   # ============================================================
   build-and-scan:
     name: Build Docker Image & Security Scan
-    needs: test
 
-    # Only build Docker image for pushes to testing/main
+    needs:
+      - test
+
+    # Build only after push to testing/main.
+    # PRs are tested but don't push Docker images.
     if: github.event_name == 'push'
 
     runs-on: ubuntu-latest
 
+    env:
+      IMAGE_NAME: ${{ vars.DOCKERHUB_USERNAME }}/starlight-notes
+
     steps:
+
+      # ------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------
       - name: Checkout Code
         uses: actions/checkout@v7
 
+      # ------------------------------------------------------
+      # Setup Docker Buildx
+      # ------------------------------------------------------
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v4.3.0
+        uses: docker/setup-buildx-action@v4
 
+      # ------------------------------------------------------
+      # Login to Docker Hub
+      # ------------------------------------------------------
       - name: Login to Docker Hub
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # --------------------------------------------------------
-      # Build image locally
-      # --------------------------------------------------------
+      # ------------------------------------------------------
+      # Build Docker image locally
+      # ------------------------------------------------------
       - name: Build Docker Image
-        uses: docker/build-push-action@v7.4.0
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
+
+          # Load image into local Docker daemon
+          # so Trivy can scan it.
           load: true
+
           tags: |
             starlight-notes:scan
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
@@ -108,35 +205,45 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # --------------------------------------------------------
+      # ------------------------------------------------------
       # Trivy vulnerability scan
-      # --------------------------------------------------------
+      # ------------------------------------------------------
       - name: Trivy Security Scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: starlight-notes:scan
           format: table
           output: trivy-report.txt
-          severity: CRITICAL,HIGH
+
+          # Fail pipeline on HIGH or CRITICAL vulnerabilities
+          severity: HIGH,CRITICAL
+
+          # Don't fail because of vulnerabilities without fixes
           ignore-unfixed: true
+
+          # Non-zero exit code fails the job
           exit-code: 1
 
+      # ------------------------------------------------------
+      # Upload Trivy report
+      # ------------------------------------------------------
       - name: Upload Trivy Report
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: trivy-security-report
           path: trivy-report.txt
           retention-days: 7
 
-      # --------------------------------------------------------
-      # Push image only after successful Trivy scan
-      # --------------------------------------------------------
+      # ------------------------------------------------------
+      # Push image only after Trivy succeeds
+      # ------------------------------------------------------
       - name: Push Docker Image
-        uses: docker/build-push-action@v7.4.0
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
+
           push: true
 
           tags: |
@@ -148,15 +255,23 @@ jobs:
 
 
   # ============================================================
-  # 3. DEPLOY TO VPS
+  # JOB 4 — DEPLOY TO PRODUCTION VPS
   # ============================================================
   deploy:
     name: Deploy to Production VPS
+
     needs:
       - test
       - build-and-scan
 
-    # ONLY main push deploys to VPS
+    # ----------------------------------------------------------
+    # Deploy ONLY when:
+    #
+    # 1. Event is push
+    # 2. Branch is main
+    # 3. Tests passed
+    # 4. Docker build + Trivy passed
+    # ----------------------------------------------------------
     if: |
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
@@ -167,14 +282,20 @@ jobs:
 
     steps:
 
-      - name: Deploy to VPS
+      # ------------------------------------------------------
+      # SSH into VPS and deploy
+      # ------------------------------------------------------
+      - name: Deploy to Production VPS
         uses: appleboy/ssh-action@v1.2.5
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT }}
 
+          # VPS connection
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ vars.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ vars.VPS_PORT }}
+
+          # Stop immediately if any command fails
           script_stop: true
 
           script: |
@@ -182,70 +303,102 @@ jobs:
             set -e
 
             echo "======================================"
-            echo "🚀 Starting Starlight Notes Deployment"
+            echo "🚀 Starting Production Deployment"
             echo "======================================"
 
-            # --------------------------------------------------
-            # Docker Hub Login
-            # --------------------------------------------------
+            # ------------------------------------------------
+            # Login to Docker Hub
+            # ------------------------------------------------
+            echo "🔐 Logging in to Docker Hub..."
+
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
               docker login \
-              --username "${{ secrets.DOCKERHUB_USERNAME }}" \
+              --username "${{ vars.DOCKERHUB_USERNAME }}" \
               --password-stdin
 
-            # --------------------------------------------------
-            # Pull new image
-            # --------------------------------------------------
+
+            # ------------------------------------------------
+            # Pull latest image
+            # ------------------------------------------------
             echo "📦 Pulling latest Docker image..."
 
             docker pull \
-              ${{ secrets.DOCKERHUB_USERNAME }}/starlight-notes:latest
+              ${{ vars.DOCKERHUB_USERNAME }}/starlight-notes:latest
 
-            # --------------------------------------------------
+
+            # ------------------------------------------------
             # Stop old container
-            # --------------------------------------------------
+            # ------------------------------------------------
             echo "🛑 Stopping old container..."
 
             docker stop starlight-notes 2>/dev/null || true
 
+
+            # ------------------------------------------------
+            # Remove old container
+            # ------------------------------------------------
+            echo "🗑️ Removing old container..."
+
             docker rm starlight-notes 2>/dev/null || true
 
-            # --------------------------------------------------
+
+            # ------------------------------------------------
             # Start new container
-            # --------------------------------------------------
+            # ------------------------------------------------
             echo "🚀 Starting new container..."
 
             docker run -d \
               --name starlight-notes \
               --restart unless-stopped \
               -p 3000:3000 \
-              ${{ secrets.DOCKERHUB_USERNAME }}/starlight-notes:latest
+              ${{ vars.DOCKERHUB_USERNAME }}/starlight-notes:latest
 
-            # --------------------------------------------------
-            # Wait for container
-            # --------------------------------------------------
+
+            # ------------------------------------------------
+            # Give application time to start
+            # ------------------------------------------------
             echo "⏳ Waiting for application..."
 
             sleep 5
 
-            # --------------------------------------------------
-            # Verify container is running
-            # --------------------------------------------------
-            if docker ps --filter "name=starlight-notes" --filter "status=running" | grep -q starlight-notes; then
+
+            # ------------------------------------------------
+            # Verify container
+            # ------------------------------------------------
+            echo "🔍 Checking container status..."
+
+            if docker ps \
+              --filter "name=starlight-notes" \
+              --filter "status=running" \
+              | grep -q starlight-notes
+            then
+
               echo "✅ Container is running."
+
             else
+
               echo "❌ Container failed to start."
-              docker logs starlight-notes
+
+              echo "========== CONTAINER LOGS =========="
+
+              docker logs starlight-notes || true
+
               exit 1
+
             fi
 
-            # --------------------------------------------------
-            # Cleanup old images
-            # --------------------------------------------------
+
+            # ------------------------------------------------
+            # Docker cleanup
+            # ------------------------------------------------
             echo "🧹 Cleaning unused Docker images..."
 
             docker image prune -f
 
+
+            # ------------------------------------------------
+            # Deployment completed
+            # ------------------------------------------------
             echo "======================================"
-            echo "✅ Deployment Successful"
+            echo "✅ PRODUCTION DEPLOYMENT SUCCESSFUL"
             echo "======================================"
