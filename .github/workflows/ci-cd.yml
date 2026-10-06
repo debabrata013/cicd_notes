@@ -215,7 +215,7 @@ jobs:
             echo " STARTING PRODUCTION DEPLOYMENT"
             echo "======================================"
 
-            echo " Logging in to Docker Hub..."
+            echo "Logging in to Docker Hub..."
 
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
               docker login \
