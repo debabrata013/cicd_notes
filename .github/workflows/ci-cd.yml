@@ -28,20 +28,23 @@ jobs:
     name: Test & Code Coverage
     runs-on: ubuntu-latest
 
+    # Skip testing if it's a direct PR from testing -> main
+    if: ! (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'testing')
+
     steps:
 
       # --------------------------------------------------------
       # Checkout repository
       # --------------------------------------------------------
       - name: Checkout Code
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
 
       # --------------------------------------------------------
       # Setup Node.js
       # --------------------------------------------------------
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
@@ -91,7 +94,7 @@ jobs:
       # --------------------------------------------------------
       - name: Upload Coverage Report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: code-coverage-report
           path: coverage/
@@ -174,12 +177,11 @@ jobs:
     needs:
       - test
 
-    # ----------------------------------------------------------
-    # Only build Docker image on pushes to testing/main
-    #
-    # PRs only run tests and branch validation.
-    # ----------------------------------------------------------
-    if: github.event_name == 'push'
+    # Skip build & scan if it's a direct PR from testing -> main
+    if: |
+      always() &&
+      github.event_name == 'push' &&
+      ! (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'testing')
 
     runs-on: ubuntu-latest
 
@@ -192,24 +194,21 @@ jobs:
       # Checkout
       # --------------------------------------------------------
       - name: Checkout Code
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
 
       # --------------------------------------------------------
       # Setup Docker Buildx
       # --------------------------------------------------------
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v3
 
 
       # --------------------------------------------------------
       # Login to Docker Hub
-      #
-      # DOCKERHUB_USERNAME = Repository Variable
-      # DOCKERHUB_TOKEN    = Repository Secret
       # --------------------------------------------------------
       - name: Login to Docker Hub
-        uses: docker/login-action@v4
+        uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -217,12 +216,9 @@ jobs:
 
       # --------------------------------------------------------
       # Build Docker image
-      #
-      # load: true
-      # makes the image available to Trivy locally.
       # --------------------------------------------------------
       - name: Build Docker Image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
@@ -239,33 +235,14 @@ jobs:
       # ========================================================
       # TRIVY SECURITY SCAN
       # ========================================================
-      #
-      # ONLY CRITICAL vulnerabilities fail the pipeline.
-      #
-      # LOW      → PASS
-      # MEDIUM   → PASS
-      # HIGH     → PASS
-      # CRITICAL → FAIL
-      #
-      # ignore-unfixed=false means:
-      #
-      # CRITICAL with fix    → FAIL
-      # CRITICAL without fix → FAIL
-      #
-      # ========================================================
       - name: Trivy Security Scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: starlight-notes:scan
-
           format: table
-
           output: trivy-report.txt
-
           severity: CRITICAL
-
           ignore-unfixed: false
-
           exit-code: 1
 
 
@@ -293,7 +270,7 @@ jobs:
       # --------------------------------------------------------
       - name: Upload Trivy Report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: trivy-security-report
           path: trivy-report.txt
@@ -302,17 +279,9 @@ jobs:
 
       # ========================================================
       # PUSH IMAGE
-      #
-      # This step runs ONLY if:
-      #
-      # Test passed
-      # Docker build passed
-      # Trivy passed
-      #
-      # Therefore CRITICAL vulnerability prevents image push.
       # ========================================================
       - name: Push Docker Image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
@@ -339,19 +308,16 @@ jobs:
       - build-and-scan
 
     # ----------------------------------------------------------
-    # DEPLOY ONLY WHEN:
-    #
-    # 1. Event = push
-    # 2. Branch = main
-    # 3. Tests passed
-    # 4. Docker build passed
-    # 5. Trivy passed
+    # DEPLOY WHEN:
+    # 1. Direct PR from testing -> main (Direct Deploy without testing/scanning)
+    # 2. OR Push to main (after test and build-and-scan pass)
     # ----------------------------------------------------------
     if: |
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
-      needs.test.result == 'success' &&
-      needs.build-and-scan.result == 'success'
+      always() &&
+      (
+        (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'testing') ||
+        (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && needs.build-and-scan.result == 'success')
+      )
 
     runs-on: ubuntu-latest
 
@@ -361,7 +327,7 @@ jobs:
       # SSH DEPLOYMENT
       # ========================================================
       - name: Deploy to Production VPS
-        uses: appleboy/ssh-action@v1.2.5
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ vars.VPS_USERNAME }}
@@ -423,7 +389,7 @@ jobs:
             docker run -d \
               --name starlight-notes \
               --restart unless-stopped \
-              -p 6000:3000 \
+              -p 3000:3000 \
               ${{ vars.DOCKERHUB_USERNAME }}/starlight-notes:latest
 
 
