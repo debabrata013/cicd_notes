@@ -84,7 +84,7 @@ EOF
 
                     docker run -d \
                         --restart unless-stopped \
-                        --name jenkinsflaskapp \
+                        --name jenkinsnotesapp \
                         -p 3003:3000 \
                         "$IMAGE:$TAG"
                 '''
